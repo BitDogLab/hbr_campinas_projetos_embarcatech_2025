@@ -1,0 +1,57 @@
+
+## Tecnologias Utilizadas**
+
+* **Linguagem de Programação:** C/C++  
+* **SDK:** Raspberry Pi Pico SDK  
+* **Sistema Operacional:** FreeRTOS  
+* **Plataforma de ML:** Edge Impulse (para treinamento e otimização do modelo)  
+* **Framework de Inferência:** Edge Impulse C++ SDK  
+* **Protocolo de Comunicação:** MQTT (com a biblioteca Paho MQTT Embedded C)  
+* **Pilha de Rede:** LwIP (integrada ao Pico-W SDK)  
+* **Hardware:** BitDogLab PI PICO W V6, MPU6050, SSD1306
+
+## Instruções de Setup e Build**
+
+1. **Pré-requisitos:**  
+   * Configurar o ambiente de desenvolvimento do Raspberry Pi Pico (Pico SDK, toolchain ARM).  
+   * Clonar este repositório para a sua máquina local.  
+2. **Configuração do Projeto:**  
+   * Abra o arquivo `main.c` e altere as credenciais do Wi-Fi (`ssid` e `pass`) para as da sua rede local.  
+   * Abra o arquivo `mqtt_task.c` e configure as macros `MQTT_BROKER_HOST`, `MQTT_USERNAME` e `MQTT_PASSWORD` com as informações do seu broker MQTT.  
+3. **Compilação:**  
+   * Navegue até a pasta raiz do projeto.  
+   * Crie e acesse um diretório de build:
+    ```bash
+      mkdir build && cd build
+    ```  
+   * Execute o CMake para gerar os arquivos de compilação e compile o projeto:
+    ```bash
+      cmake ..
+      make -j$(nproc)
+    ```    
+4. **Gravação (Flashing):**  
+   * Conecte a BitDogLab ao seu computador enquanto segura o botão `BOOTSEL` para colocá-la em modo de gravação.  
+   * Copie o arquivo `tinyml_gate.uf2` (localizado na pasta `build`) para o novo drive `RPI-RP2` que aparecerá em seu computador. A placa irá reiniciar automaticamente.
+
+## Instruções de Uso**
+
+* **Inicialização:** Ao ser energizado, o sistema inicializa o Wi-Fi e os periféricos. O LED RGB piscará em vermelho, verde e azul para indicar que está funcional. O display OLED exibirá uma tela de boas-vindas que pisca por 5 segundos.  
+* **Operação Normal:** O sistema começa a coletar dados do acelerômetro e a realizar inferências. O resultado da classificação (e.g., "Classe Inferida: parado") será impresso no console serial e publicado no tópico MQTT. Os dados brutos de aceleração dos três eixos (Ax, Ay, Az) serão mostrados continuamente no display.  
+* **Interação com Botões:**  
+  * **Botão A:** Ao ser pressionado, envia os dados de aceleração para a fila principal, que os exibe no display OLED.  
+  * **Botão B:** Pressionar e segurar este botão "reserva" o LED RGB usando um mutex, acendendo-o em verde. Soltar o botão libera o LED.  
+  * **Botão Joystick:** Pressionar o joystick libera um semáforo que é capturado pela tarefa do display para exibir uma mensagem de evento.
+
+## Código-Fonte**
+
+* **`main.c`**: Ponto de entrada da aplicação. Inicializa hardware, Wi-Fi e cria todas as tarefas do FreeRTOS, definindo suas prioridades e alocação de memória, antes de entregar o controle ao escalonador do RTOS.  
+* **`ml.cpp`**: Contém a `ml_task`, o núcleo de IA do sistema. Esta tarefa é orientada a eventos, aguardando dados em uma fila (`xQueueReceive`). Ela preenche um buffer com amostras do acelerômetro (técnica de janelamento) e, quando o buffer está cheio, invoca o classificador do Edge Impulse (`run_classifier`). O resultado é filtrado por um limiar de confiança (`CONFIDENCE_THRESHOLD`) para garantir a precisão da classificação.  
+* **`mpu6050.c`**: Driver e tarefa para o sensor inercial. A `mpu6050_task` lê o sensor a uma frequência precisa e envia os dados (convertidos para m/s²) para uma fila, agindo como um "produtor" de dados para a `ml_task`. O acesso ao barramento I2C é protegido por um mutex para garantir a segurança em um ambiente multitarefa.  
+* **`mqtt_task.c`**: Implementa a lógica de comunicação IoT. Conecta-se a um broker MQTT (neste caso, `hivemq.cloud`) e publica mensagens de status em formato JSON periodicamente, além de se inscrever em um tópico para receber comandos (`messageArrived` callback). Utiliza uma camada de abstração (`paho_network.c`, `paho_timer.c`) para portar a biblioteca Paho para o ambiente FreeRTOS+LwIP.  
+* **`display_gate.c`**: Tarefa que gerencia o display OLED. Ela é projetada para ser a única tarefa que escreve no periférico, recebendo dados de outras tarefas e atualizando a tela para mostrar os valores de aceleração em tempo real. Os múltiplos blocos de código comentados demonstram a evolução da lógica de exibição durante o desenvolvimento.  
+* **`button_*.c`**: Cada arquivo implementa uma tarefa dedicada a um botão, tratando o debouncing e convertendo o evento físico (pressionar de botão) em um evento lógico para o sistema (envio de mensagem para fila, liberação de semáforo, ou tomada de mutex).  
+* **`ctrl.c`**: Módulo centralizador que inicializa e fornece acesso global aos objetos do FreeRTOS (filas, mutexes, semáforos), uma prática que organiza e simplifica o gerenciamento de recursos.  
+* **`display.c` e `ssd1306_i2c.c`**: Sistema de driver de duas camadas para o display. `ssd1306_i2c.c` lida com a comunicação I2C e comandos de baixo nível, enquanto `display.c` oferece uma API de alto nível para a aplicação.  
+* **`util.c`**: Contém funções auxiliares, como `util_gera_e_envia_msg`, que formata uma string com um timestamp e a envia para uma fila, padronizando o formato de mensagens no sistema.
+
+
